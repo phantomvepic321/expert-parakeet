@@ -2,31 +2,102 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Keyword Extractor</title>
+<title>Chapter Keyword Extractor (Subject-aware)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; padding: 10px; }
-h2 { color: #333; }
-input, textarea, button { width: 100%; margin: 10px 0; padding: 8px; font-size: 14px; }
-pre { background: #f4f4f4; padding: 10px; white-space: pre-wrap; }
+body { font-family: Arial, sans-serif; max-width: 900px; margin: 32px auto; padding: 0 12px; }
+h2 { color: #222; margin: 16px 0 8px; }
+h3 { margin: 18px 0 6px; }
+section { border: 1px solid #ddd; border-radius: 8px; padding: 14px; margin: 16px 0; }
+label { display:block; margin: 8px 0 4px; font-weight: 600; }
+input[type="file"], textarea, select, button { width: 100%; padding: 8px; margin: 6px 0 10px; font-size: 14px; }
+button { cursor: pointer; }
+.controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+pre { background: #f7f7f7; padding: 10px; white-space: pre-wrap; border-radius: 6px; }
+.small { font-size: 12px; color: #555; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.slider-row { display:flex; align-items:center; gap:10px; }
+.slider-row input[type="range"] { flex:1; }
+.badge { display:inline-block; padding:2px 8px; border-radius:10px; background:#eee; margin-right:6px; margin-bottom:6px; cursor:pointer; }
+.badge:hover { background:#ddd; }
+textarea.mono { font-family: monospace; }
 </style>
 </head>
 <body>
-<h2>📄 Keyword Extractor (Offline, No Backend)</h2>
 
-<h3>1. Upload PDF</h3>
-<input type="file" id="pdfInput" accept="application/pdf">
+<h2>📘 Subject-aware Distinguishing Keyword Extractor (Offline)</h2>
 
-<h3>OR Paste Text</h3>
-<textarea id="textInput" rows="6" placeholder="Paste your text or article content here..."></textarea>
-<button id="analyzeBtn">Extract Keywords</button>
+<section>
+  <div class="row">
+    <div>
+      <label>Subject</label>
+      <select id="subject">
+        <option value="physics">Physics</option>
+        <option value="chemistry">Chemistry</option>
+        <option value="math">Math</option>
+      </select>
+    </div>
+    <div>
+      <label class="small">Common-word threshold</label>
+      <div class="slider-row">
+        <span class="small">Low</span>
+        <input id="threshold" type="range" min="1" max="20" step="1" value="5" />
+        <span class="small">High</span>
+      </div>
+      <div class="small">Words with frequency ≥ threshold in profile are omitted.</div>
+    </div>
+  </div>
 
-<h3>Keywords</h3>
-<pre id="output"></pre>
+  <div class="controls">
+    <button id="trainBtn">Train subject profile from current chapter</button>
+    <button id="clearProfileBtn">Clear subject profile</button>
+  </div>
+
+  <label>Subject common words (click to remove)</label>
+  <div id="subjectCommonWords"></div>
+
+  <label>Edit profile manually (one per line)</label>
+  <textarea id="subjectCommonEditor" rows="5" class="mono"></textarea>
+  <div class="controls">
+    <button id="applyEditorBtn">Apply edited list</button>
+    <button id="exportProfileBtn">Export profile JSON</button>
+  </div>
+</section>
+
+<section>
+  <h3>1) This chapter</h3>
+  <label>Upload PDF</label>
+  <input type="file" id="pdfInput" accept="application/pdf" />
+  <label>OR paste text</label>
+  <textarea id="textInput" rows="6"></textarea>
+</section>
+
+<section>
+  <h3>Custom filler words</h3>
+  <textarea id="customStopwords" rows="2" placeholder="Example: board marks practice"></textarea>
+</section>
+
+<section>
+  <div class="controls">
+    <button id="analyzeBtn">Extract Distinguishing Keywords</button>
+    <button id="analyzeRawBtn">Extract Top 30 (ignore profile)</button>
+  </div>
+</section>
+
+<section>
+  <h3>Keywords (Readable)</h3>
+  <pre id="output"></pre>
+
+  <h3>List Output</h3>
+  <pre id="listOutput"></pre>
+
+  <h3>Dictionary Output</h3>
+  <pre id="dictOutput"></pre>
+</section>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
-const stopwords = new Set([
+const baseStopwords = new Set([
   'i','me','my','myself','we','our','ours','ourselves','you','your',
   'yours','yourself','yourselves','he','him','his','himself','she',
   'her','hers','herself','it','its','itself','they','them','their',
@@ -39,49 +110,155 @@ const stopwords = new Set([
   'in','out','on','off','over','under','again','further','then','once',
   'here','there','when','where','why','how','all','any','both','each',
   'few','more','most','other','some','such','no','nor','not','only',
-  'own','same','so','than','too','very','can','will','just','don','should','now'
+  'own','same','so','than','too','very','can','will','just','don','should','now',
+  'reprint','question','questions','example','examples','exercise','exercises',
+  'chapter','figure','fig','figures','diagram','diagrams','table','tables',
+  'page','pages','section','sections','part','parts','topic','topics',
+  'content','contents','answer','answers','solution','solutions','problem','problems',
+  'appendix','reference','references','see','above','below','illustration','illustrations',
+  'step','steps','practice','practices','objective','objectives','summary','summaries'
 ]);
 
-function extractKeywords(text) {
+const STORAGE_KEY = 'subject_profiles_v1';
+function defaultProfiles() {
+  return {
+    physics: { motion:3, force:3, velocity:3, acceleration:3, energy:3, equation:3, equals:3, unit:3 },
+    chemistry: { molecule:3, molecules:3, atom:3, atoms:3, reaction:3, reactions:3, compound:3, solution:3 },
+    math: { equals:3, theorem:3, proof:3, function:3, equation:3, equations:3, solve:3 }
+  };
+}
+function loadProfiles() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || defaultProfiles();
+  } catch { return defaultProfiles(); }
+}
+function saveProfiles(prof) { localStorage.setItem(STORAGE_KEY, JSON.stringify(prof)); }
+let profiles = loadProfiles();
+
+function getSubject() { return document.getElementById('subject').value; }
+function getThreshold() { return parseInt(document.getElementById('threshold').value, 10) || 5; }
+
+function getCustomStopwords() {
+  const raw = document.getElementById('customStopwords').value.trim();
+  return raw ? raw.split(/[\s,]+/).map(w => w.toLowerCase()) : [];
+}
+
+function wordFreq(text, extraStop=[]) {
+  const stop = new Set([...baseStopwords, ...extraStop]);
   const words = text.toLowerCase().replace(/[^a-z\s]/g, ' ').split(/\s+/);
   const freq = {};
   for (const w of words) {
-    if (w && !stopwords.has(w) && w.length > 2) {
-      freq[w] = (freq[w] || 0) + 1;
-    }
+    if (w && !stop.has(w) && w.length > 2) freq[w] = (freq[w]||0)+1;
   }
-  return Object.entries(freq)
-    .sort((a,b) => b[1]-a[1])
-    .slice(0, 20)
-    .map(([word, count]) => `${word} (${count})`);
+  return freq;
 }
 
-document.getElementById('analyzeBtn').addEventListener('click', () => {
-  const text = document.getElementById('textInput').value;
-  if (!text.trim()) return alert("Please paste some text first.");
-  const keywords = extractKeywords(text);
-  document.getElementById('output').textContent = keywords.join(', ');
+function extractPdfText(file) {
+  return new Promise(async (res, rej) => {
+    try {
+      const buf = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument(new Uint8Array(buf)).promise;
+      let text = '';
+      for (let i=1;i<=pdf.numPages;i++) {
+        const page = await pdf.getPage(i);
+        const tc = await page.getTextContent();
+        text += tc.items.map(it => it.str).join(' ') + ' ';
+      }
+      res(text);
+    } catch(e){ rej(e); }
+  });
+}
+
+function getSubjectCommonWords(subj, threshold) {
+  return Object.entries(profiles[subj]||{})
+    .filter(([,c]) => c >= threshold)
+    .map(([w]) => w);
+}
+
+function mergeFreqMaps(base, add) {
+  for (const [w,c] of Object.entries(add)) base[w] = (base[w]||0)+c;
+}
+
+function trainSubjectProfileFromText(subj, text) {
+  const freq = wordFreq(text, []);
+  mergeFreqMaps(profiles[subj]||={}, freq);
+  saveProfiles(profiles);
+}
+
+function setSubjectCommonFromList(subj, list) {
+  const obj = {};
+  for (const w of list) if (w.length>2) obj[w]=3;
+  profiles[subj] = obj; saveProfiles(profiles);
+}
+
+function getTop30(text, subj, threshold, useProfile=true) {
+  const custom = getCustomStopwords();
+  const subjectCommon = useProfile ? getSubjectCommonWords(subj, threshold) : [];
+  const freq = wordFreq(text, [...custom, ...subjectCommon]);
+  const sorted = Object.entries(freq).sort((a,b) => b[1]-a[1]).slice(0,30);
+  return { readable: sorted.map(([w,c])=>`${w} (${c})`), wordList: sorted.map(([w])=>w), freqObject: Object.fromEntries(sorted) };
+}
+
+function refreshSubjectUI() {
+  const subj = getSubject(), thresh = getThreshold();
+  const prof = profiles[subj]||{};
+  const common = Object.entries(prof).filter(([,c])=>c>=thresh).map(([w])=>w);
+  const cont = document.getElementById('subjectCommonWords');
+  cont.innerHTML = '';
+  if (!common.length) cont.innerHTML='<span class="small">No words above threshold.</span>';
+  else common.forEach(w=>{
+    const span=document.createElement('span'); span.className='badge'; span.textContent=w;
+    span.onclick=()=>{ delete profiles[subj][w]; saveProfiles(profiles); refreshSubjectUI(); }
+    cont.appendChild(span);
+  });
+  document.getElementById('subjectCommonEditor').value = Object.keys(prof).sort().join('\n');
+}
+
+async function getChapterText() {
+  let text = document.getElementById('textInput').value || '';
+  if (!text.trim()) {
+    const f = document.getElementById('pdfInput').files[0];
+    if (f) text = await extractPdfText(f);
+  }
+  return text;
+}
+
+// Events
+document.getElementById('subject').addEventListener('change', refreshSubjectUI);
+document.getElementById('threshold').addEventListener('input', refreshSubjectUI);
+document.getElementById('applyEditorBtn').addEventListener('click', ()=>{
+  setSubjectCommonFromList(getSubject(), document.getElementById('subjectCommonEditor').value.split('\n').map(s=>s.trim().toLowerCase()).filter(Boolean));
+  refreshSubjectUI();
+});
+document.getElementById('exportProfileBtn').addEventListener('click', ()=>{
+  const subj = getSubject(), data=JSON.stringify(profiles[subj]||{},null,2);
+  const blob=new Blob([data],{type:'application/json'}), url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download=`${subj}-profile.json`; a.click(); URL.revokeObjectURL(url);
+});
+document.getElementById('clearProfileBtn').addEventListener('click', ()=>{
+  profiles[getSubject()]={}; saveProfiles(profiles); refreshSubjectUI();
+});
+document.getElementById('trainBtn').addEventListener('click', async ()=>{
+  const t=await getChapterText(); if(!t.trim()) return alert('No chapter text.');
+  trainSubjectProfileFromText(getSubject(), t); refreshSubjectUI(); alert('Profile trained.');
+});
+document.getElementById('analyzeBtn').addEventListener('click', async ()=>{
+  const t=await getChapterText(); if(!t.trim()) return alert('No chapter text.');
+  const {readable,wordList,freqObject}=getTop30(t,getSubject(),getThreshold(),true);
+  document.getElementById('output').textContent=readable.join(', ');
+  document.getElementById('listOutput').textContent=JSON.stringify(wordList,null,2);
+  document.getElementById('dictOutput').textContent=JSON.stringify(freqObject,null,2);
+});
+document.getElementById('analyzeRawBtn').addEventListener('click', async ()=>{
+  const t=await getChapterText(); if(!t.trim()) return alert('No chapter text.');
+  const {readable,wordList,freqObject}=getTop30(t,getSubject(),getThreshold(),false);
+  document.getElementById('output').textContent=readable.join(', ');
+  document.getElementById('listOutput').textContent=JSON.stringify(wordList,null,2);
+  document.getElementById('dictOutput').textContent=JSON.stringify(freqObject,null,2);
 });
 
-document.getElementById('pdfInput').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = async function() {
-    const typedArray = new Uint8Array(this.result);
-    const pdf = await pdfjsLib.getDocument(typedArray).promise;
-    let textContent = '';
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const text = await page.getTextContent();
-      text.items.forEach(item => textContent += item.str + ' ');
-    }
-    const keywords = extractKeywords(textContent);
-    document.getElementById('output').textContent = keywords.join(', ');
-  };
-  reader.readAsArrayBuffer(file);
-});
+// Init
+refreshSubjectUI();
 </script>
-
 </body>
 </html>
