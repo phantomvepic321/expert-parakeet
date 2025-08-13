@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Keyword Extractor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; padding: 10px; }
+h2 { color: #333; }
+input, textarea, button { width: 100%; margin: 10px 0; padding: 8px; font-size: 14px; }
+pre { background: #f4f4f4; padding: 10px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h2>📄 Keyword Extractor (Offline, No Backend)</h2>
+
+<h3>1. Upload PDF</h3>
+<input type="file" id="pdfInput" accept="application/pdf">
+
+<h3>OR Paste Text</h3>
+<textarea id="textInput" rows="6" placeholder="Paste your text or article content here..."></textarea>
+<button id="analyzeBtn">Extract Keywords</button>
+
+<h3>Keywords</h3>
+<pre id="output"></pre>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+const stopwords = new Set([
+  'i','me','my','myself','we','our','ours','ourselves','you','your',
+  'yours','yourself','yourselves','he','him','his','himself','she',
+  'her','hers','herself','it','its','itself','they','them','their',
+  'theirs','themselves','what','which','who','whom','this','that',
+  'these','those','am','is','are','was','were','be','been','being',
+  'have','has','had','having','do','does','did','doing','a','an',
+  'the','and','but','if','or','because','as','until','while','of',
+  'at','by','for','with','about','against','between','into','through',
+  'during','before','after','above','below','to','from','up','down',
+  'in','out','on','off','over','under','again','further','then','once',
+  'here','there','when','where','why','how','all','any','both','each',
+  'few','more','most','other','some','such','no','nor','not','only',
+  'own','same','so','than','too','very','can','will','just','don','should','now'
+]);
+
+function extractKeywords(text) {
+  const words = text.toLowerCase().replace(/[^a-z\s]/g, ' ').split(/\s+/);
+  const freq = {};
+  for (const w of words) {
+    if (w && !stopwords.has(w) && w.length > 2) {
+      freq[w] = (freq[w] || 0) + 1;
+    }
+  }
+  return Object.entries(freq)
+    .sort((a,b) => b[1]-a[1])
+    .slice(0, 20)
+    .map(([word, count]) => `${word} (${count})`);
+}
+
+document.getElementById('analyzeBtn').addEventListener('click', () => {
+  const text = document.getElementById('textInput').value;
+  if (!text.trim()) return alert("Please paste some text first.");
+  const keywords = extractKeywords(text);
+  document.getElementById('output').textContent = keywords.join(', ');
+});
+
+document.getElementById('pdfInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async function() {
+    const typedArray = new Uint8Array(this.result);
+    const pdf = await pdfjsLib.getDocument(typedArray).promise;
+    let textContent = '';
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const text = await page.getTextContent();
+      text.items.forEach(item => textContent += item.str + ' ');
+    }
+    const keywords = extractKeywords(textContent);
+    document.getElementById('output').textContent = keywords.join(', ');
+  };
+  reader.readAsArrayBuffer(file);
+});
+</script>
+
+</body>
+</html>
